@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#!/usr/bin/python3 -tt
 #
 # Remove wildcard imports from Python code.
 #
@@ -12,26 +12,142 @@
 # See http://github.com/quentinsf/dewildcard for info.
 #
 # Quentin Stafford-Fraser, 2015
+# Toshio Kuraotmi, 2017
 
 import importlib
+import os
 import re
 import sys
+import tempfile
+from io import StringIO
 
-import_all_re = re.compile(r'^\s*from\s*([\w.]*)\s*import\s*[*]')
+import sh
+
+
+IMPORT_ALL_RE = re.compile(r'^\s*from\s*([\w.]*)\s*import\s*[*]')
 
 def import_all_string(module_name):
     importlib.import_module(module_name)
-    import_line = 'from %s import ( %%s )\n' % module_name
-    length = len(import_line) - 5
-    return import_line % (',\n' + length * ' ').join(
-        [a for a in dir(sys.modules[module_name]) if not a.startswith('_')] )
+    import_line = ['from %s import (' % module_name]
+    shift_length = len(import_line[0])
 
-def main():
-    for line in sys.stdin:
-        match = import_all_re.match(line)
+    import_line.extend('%s%s,' % (' ' * shift_length, m) for m in dir(sys.modules[module_name]) if not m.startswith('_'))
+    # Chop the final comma off the set of imports
+    import_line[-1] = import_line[-1][:-1]
+    import_line.append(' '* shift_length + ')')
+
+    return import_line
+
+
+def expand_wildcards(stream):
+    buf = []
+    expansions = []
+
+    # Remove all of the import *
+    offset = 0
+    for lineno, line in enumerate(stream):
+        match = IMPORT_ALL_RE.match(line)
         if match:
             line = import_all_string(match.group(1))
-        sys.stdout.write(line)
+            number_of_lines = len(line)
+            new_offset = offset + number_of_lines - 1
+            expansions.append((lineno + offset, lineno + new_offset))
+            offset = new_offset
+            buf.extend(line)
+        else:
+            buf.append(line.rstrip())
+
+    return buf, expansions
+
+
+def remove_unused_imports(buf, ranges=None):
+
+    targetted_lines = set()
+    if ranges is None:
+        targetted_lines.update(range(0, len(buf)))
+    else:
+        for range_record in ranges:
+            targetted_lines.update(range(range_record[0], range_record[1] + 1))
+
+    tmp = tempfile.NamedTemporaryFile(mode='w')
+    tmp.write('\n'.join(buf))
+
+    linter_out = StringIO()
+    try:
+        sh.flake8(['--select=F401,F811', '--format=pylint', tmp.name], _out=linter_out)
+    except sh.ErrorReturnCode:
+        pass
+
+    linter_out.seek(0)
+
+    linter_out.seek(0)
+    omit = {}
+    for record in linter_out:
+        symbol = None
+        lineno = int(record.split(':')[1])
+        info = record.split(':')[2].strip()
+        code = info.split()[0]
+        if lineno in targetted_lines:
+            if code == '[F401]':
+                symbol = info.split()[1]
+                if symbol[0] in ('\'"'):
+                    symbol = symbol[1:]
+                if symbol[-1] in ('\'"'):
+                    symbol = symbol[:-1]
+                symbol = symbol.split('.')[-1]
+
+            elif code == '[F811]':
+                symbol = info.split()[4]
+                if symbol[0] in ('\'"'):
+                    symbol = symbol[1:]
+                if symbol[-1] in ('\'"'):
+                    symbol = symbol[:-1]
+                symbol = symbol.split('.')[-1]
+
+        if symbol is not None:
+            if lineno not in omit:
+                omit[lineno] = set()
+            omit[lineno].add(symbol)
+
+    new_buf = []
+    current_omissions = None
+    debug = open('/tmp/debug', 'w')
+    for idx, line in enumerate(buf):
+        debug.write('%s: %s\n' % (idx, line))
+        if idx in omit:
+            if current_omissions is not None:
+                raise Exception("Bad!")
+            current_omissions = omit[idx]
+        if current_omissions is not None:
+            if line.strip() == ')':
+                current_omissions = None
+            else:
+                symbol = line.strip()
+                if symbol.endswith(','):
+                    symbol = symbol[:-1]
+                if symbol in current_omissions:
+                    continue
+        new_buf.append(line)
+
+    return new_buf
+
+
+def main():
+
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], 'r') as stream:
+            module_buffer, expansions = expand_wildcards(stream)
+    else:
+        module_buffer, expansions = expand_wildcards(sys.stdin)
+
+    buf = remove_unused_imports(module_buffer, expansions)
+
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], 'w') as f:
+            f.write('\n'.join(buf))
+    else:
+        sys.stdout.write('\n'.join(buf))
+
 
 if __name__ == '__main__':
     main()

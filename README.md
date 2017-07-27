@@ -56,7 +56,4 @@ Lots of room for improvements here, including:
 Such a simple script is barely worth a licence, but, for what it's worth, it's released under GNU Publice Licence v2.  Use at your own risk, etc.
 
 (c) 2015 Quentin Stafford-Fraser
-
-
-
-
+(c) 2017 Toshio Kuratomi
