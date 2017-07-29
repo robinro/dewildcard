@@ -80,7 +80,6 @@ def remove_unused_imports(buf, ranges=None):
 
     linter_out.seek(0)
 
-    linter_out.seek(0)
     omit = {}
     for record in linter_out:
         symbol = None
@@ -132,21 +131,35 @@ def remove_unused_imports(buf, ranges=None):
     return new_buf
 
 
-def main():
-
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], 'r') as stream:
-            module_buffer, expansions = expand_wildcards(stream)
-    else:
+def process_module_file(filename):
+    if filename == '-':
         module_buffer, expansions = expand_wildcards(sys.stdin)
+    else:
+        with open(filename, 'r') as f:
+            module_buffer, expansions = expand_wildcards(f)
 
     buf = remove_unused_imports(module_buffer, expansions)
 
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], 'w') as f:
-            f.write('\n'.join(buf))
-    else:
+    # Make sure we end with a newline
+    if not buf[-1] == '':
+        buf.append('')
+
+    if filename == '-':
         sys.stdout.write('\n'.join(buf))
+    else:
+        with open(filename, 'w') as f:
+            f.write('\n'.join(buf))
+
+
+def main():
+
+    if len(sys.argv) <= 1:
+        modules = tuple('-')
+    else:
+        modules = sys.argv[1:]
+
+    for filename in modules:
+        process_module_file(filename)
 
 
 if __name__ == '__main__':
