@@ -131,6 +131,12 @@ def remove_unused_imports(buf, ranges=None):
     return new_buf
 
 
+SINGLE_IMPORT_RE = re.compile(r'import\s*\(\s*(\w*)\s*,?\s*\) *')
+def cleanup_single_imports(buf):
+    buf = SINGLE_IMPORT_RE.sub(r'import \1\n', '\n'.join(buf))
+    return buf.splitlines()
+
+
 def process_module_file(filename):
     if filename == '-':
         module_buffer, expansions = expand_wildcards(sys.stdin)
@@ -139,6 +145,8 @@ def process_module_file(filename):
             module_buffer, expansions = expand_wildcards(f)
 
     buf = remove_unused_imports(module_buffer, expansions)
+
+    buf = cleanup_single_imports(buf)
 
     # Make sure we end with a newline
     if not buf[-1] == '':
